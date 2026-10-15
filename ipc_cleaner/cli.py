@@ -8,6 +8,12 @@ import json
 import sys
 from typing import Optional
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+
 from ipc_cleaner.agent import IPCCleanerAgent
 from ipc_cleaner.tools.audit import audit_ipc_leaks, get_ipc_summary, list_ipc_resources
 from ipc_cleaner.tools.cleaner import purge_abandoned_ipc

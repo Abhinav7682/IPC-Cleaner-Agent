@@ -2,6 +2,7 @@
 Unit tests for the IPC Cleaner Agent capability tools.
 """
 
+import sys
 import unittest
 from ipc_cleaner.core.syscalls import libc_create_shm, libc_shmctl_rmid
 from ipc_cleaner.tools.audit import (
@@ -47,6 +48,7 @@ class TestTools(unittest.TestCase):
             self.assertIn(active_id, purge_res["failed_ids"])
             self.assertIn("Refusing to purge", purge_res["failed_ids"][active_id])
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "System V IPC segment creation requires Linux")
     def test_dry_run_does_not_destroy_segment(self):
         # Create a temporary segment
         shmid, _ = libc_create_shm(size_bytes=8192)

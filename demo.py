@@ -5,9 +5,17 @@ Demonstrates the agent receiving natural language prompts, calling underlying to
 interfacing with the OS via System Calls, and safely cleaning abandoned IPC memory leaks.
 """
 
+import sys
 import time
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from ipc_cleaner.agent import IPCCleanerAgent
 from ipc_cleaner.core.parser import IPCParser
+
 
 
 def print_section(title: str):

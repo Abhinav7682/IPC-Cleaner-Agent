@@ -184,7 +184,17 @@ class IPCExecutor:
         failed: Dict[int, str] = {}
         total_bytes = 0
 
+        # Filter and sanitize valid integer IDs
+        clean_ids: List[int] = []
         for sid in shm_ids:
+            if sid is None:
+                continue
+            try:
+                clean_ids.append(int(sid))
+            except (ValueError, TypeError):
+                continue
+
+        for sid in clean_ids:
             ok, b, err = cls.remove_shm_single(
                 sid,
                 force=force,
@@ -199,7 +209,7 @@ class IPCExecutor:
 
         return PurgeResult(
             resource_type="shm",
-            requested_ids=shm_ids,
+            requested_ids=clean_ids,
             purged_ids=purged,
             failed_ids=failed,
             reclaimed_bytes=total_bytes,
@@ -223,7 +233,16 @@ class IPCExecutor:
         failed: Dict[int, str] = {}
         total_bytes = 0
 
+        clean_ids: List[int] = []
         for mid in msg_ids:
+            if mid is None:
+                continue
+            try:
+                clean_ids.append(int(mid))
+            except (ValueError, TypeError):
+                continue
+
+        for mid in clean_ids:
             ok, b, err = cls.remove_msg_single(
                 mid,
                 force=force,
@@ -238,7 +257,7 @@ class IPCExecutor:
 
         return PurgeResult(
             resource_type="msg",
-            requested_ids=msg_ids,
+            requested_ids=clean_ids,
             purged_ids=purged,
             failed_ids=failed,
             reclaimed_bytes=total_bytes,
@@ -258,7 +277,16 @@ class IPCExecutor:
         purged: List[int] = []
         failed: Dict[int, str] = {}
 
+        clean_ids: List[int] = []
         for sid in sem_ids:
+            if sid is None:
+                continue
+            try:
+                clean_ids.append(int(sid))
+            except (ValueError, TypeError):
+                continue
+
+        for sid in clean_ids:
             ok, err = cls.remove_sem_single(sid, force=force, dry_run=dry_run)
             if ok:
                 purged.append(sid)
@@ -267,7 +295,7 @@ class IPCExecutor:
 
         return PurgeResult(
             resource_type="sem",
-            requested_ids=sem_ids,
+            requested_ids=clean_ids,
             purged_ids=purged,
             failed_ids=failed,
             reclaimed_bytes=0,
@@ -275,3 +303,4 @@ class IPCExecutor:
             dry_run=dry_run,
             method_used="ipcrm / semctl"
         )
+

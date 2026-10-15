@@ -3,6 +3,7 @@ End-to-End integration test simulating orphaned IPC memory leaks,
 auditing them via the agent, and autonomously purging them.
 """
 
+import sys
 import unittest
 from ipc_cleaner.agent import IPCCleanerAgent
 from ipc_cleaner.core.parser import IPCParser
@@ -11,6 +12,7 @@ from ipc_cleaner.tools.simulator import simulate_ipc_leak
 
 class TestE2ESimulation(unittest.TestCase):
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "End-to-End System V IPC simulation requires Linux")
     def test_e2e_leak_and_remediation_lifecycle(self):
         agent = IPCCleanerAgent()
 
