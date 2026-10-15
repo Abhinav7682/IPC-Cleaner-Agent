@@ -6,6 +6,7 @@ Used for testing, evaluation, benchmarks, and instructor demonstrations.
 import json
 import os
 import subprocess
+import sys
 from typing import Any, Dict, List
 
 from ipc_cleaner.core.syscalls import libc_create_msg, libc_create_sem, libc_create_shm
@@ -66,7 +67,7 @@ def simulate_ipc_leak(
         except Exception:
             pass
 
-    # 2. Python subprocess fallback via python -c
+    # 2. Python subprocess fallback via sys.executable -c
     script = f"""
 import json, os, sys
 from ipc_cleaner.core.syscalls import libc_create_shm, libc_create_sem, libc_create_msg
@@ -91,26 +92,62 @@ for _ in range({msg_count}):
 
 print(json.dumps({{'pid': os.getpid(), 'shm': shm_ids, 'sem': sem_ids, 'msg': msg_ids}}))
 """
-    res = subprocess.run(
-        ["python3", "-c", script],
-        capture_output=True,
-        text=True,
-        check=True
-    )
-    data = json.loads(res.stdout.strip())
-    total_ram = len(data.get("shm", [])) * size_bytes
-    return {
-        "status": "success",
-        "method": "python_subprocess",
-        "creator_pid": data.get("pid"),
-        "created_shm_ids": data.get("shm", []),
-        "created_sem_ids": data.get("sem", []),
-        "created_msg_ids": data.get("msg", []),
-        "bytes_per_shm": size_bytes,
-        "total_leaked_ram_bytes": total_ram,
-        "total_leaked_ram_human": format_bytes_human(total_ram),
-        "message": (
-            f"Successfully simulated {len(data.get('shm', []))} abandoned SHM segments "
-            f"({format_bytes_human(total_ram)}) via subshell."
+    try:
+        res = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            check=True
         )
-    }
+        data = json.loads(res.stdout.strip())
+        shm_ids = data.get("shm", [])
+        sem_ids = data.get("sem", [])
+        msg_ids = data.get("msg", [])
+        total_ram = len(shm_ids) * size_bytes
+
+        # Graceful check for non-Linux or platforms without System V IPC
+        if (shm_count > 0 and len(shm_ids) == 0) and (sem_count > 0 and len(sem_ids) == 0):
+            return {
+                "status": "warning",
+                "method": "python_subprocess",
+                "creator_pid": data.get("pid"),
+                "created_shm_ids": [],
+                "created_sem_ids": [],
+                "created_msg_ids": [],
+                "bytes_per_shm": size_bytes,
+                "total_leaked_ram_bytes": 0,
+                "total_leaked_ram_human": format_bytes_human(0),
+                "message": (
+                    "Notice: System V IPC is not natively supported or libc IPC symbols are not available "
+                    "on this host OS (Linux kernel with System V IPC required). No segments were allocated."
+                )
+            }
+
+        return {
+            "status": "success",
+            "method": "python_subprocess",
+            "creator_pid": data.get("pid"),
+            "created_shm_ids": shm_ids,
+            "created_sem_ids": sem_ids,
+            "created_msg_ids": msg_ids,
+            "bytes_per_shm": size_bytes,
+            "total_leaked_ram_bytes": total_ram,
+            "total_leaked_ram_human": format_bytes_human(total_ram),
+            "message": (
+                f"Successfully simulated {len(shm_ids)} abandoned SHM segments "
+                f"({format_bytes_human(total_ram)}) via subshell."
+            )
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "method": "python_subprocess",
+            "created_shm_ids": [],
+            "created_sem_ids": [],
+            "created_msg_ids": [],
+            "bytes_per_shm": size_bytes,
+            "total_leaked_ram_bytes": 0,
+            "total_leaked_ram_human": "0 B",
+            "message": f"Simulation failed: {e}"
+        }
+

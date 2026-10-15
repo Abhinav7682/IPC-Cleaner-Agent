@@ -5,7 +5,14 @@ Shows how the Base Shell routes natural language user text to specialized agents
 
 import sys
 from typing import Any, Dict
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from ipc_cleaner.base_shell_adapter import IPCCleanerBaseShellAdapter
+
 
 
 class DemoBaseShell:
