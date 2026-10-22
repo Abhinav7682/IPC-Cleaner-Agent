@@ -24,6 +24,7 @@ Guidelines:
 """
 
 
+
 class LLMResponse:
     """Standardized LLM response containing tool calls or final message."""
     def __init__(
