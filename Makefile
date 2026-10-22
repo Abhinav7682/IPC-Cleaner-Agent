@@ -39,6 +39,9 @@ base-shell: build
 repl: build
 	python3 ipc_agent.py
 
+mcp: build
+	python3 -m ipc_cleaner.mcp_server
+
 clean:
 	rm -rf $(BIN_DIR) .pytest_cache **/__pycache__
 

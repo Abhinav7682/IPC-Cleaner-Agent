@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/mcp-config.json",
+  "mcpServers": {
+    "ipc-cleaner-agent": {
+      "command": "python",
+      "args": ["-m", "ipc_cleaner.mcp_server"],
+      "description": "System V IPC Cleaner Agent - Audits & purges leaked Shared Memory, Semaphores, and Message Queues"
+    },
+    "ipc-cleaner-agent-wsl": {
+      "command": "wsl",
+      "args": ["python3", "-m", "ipc_cleaner.mcp_server"],
+      "description": "System V IPC Cleaner Agent running via WSL2 on Linux kernel"
+    }
+  }
+}
