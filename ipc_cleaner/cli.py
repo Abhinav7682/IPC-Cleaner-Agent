@@ -84,9 +84,15 @@ def main() -> None:
     parser.add_argument("--msg", type=int, default=0, metavar="COUNT", help="Count of message queues to simulate.")
     parser.add_argument("--size-mb", type=int, default=1, help="Size in MB for simulated segments.")
     parser.add_argument("--json", action="store_true", help="Output raw JSON response.")
+    parser.add_argument("--mcp", action="store_true", help="Launch Model Context Protocol (MCP) server over stdio.")
 
     args = parser.parse_args()
     agent = IPCCleanerAgent()
+
+    if args.mcp:
+        from ipc_cleaner.mcp_server import main as run_mcp
+        run_mcp()
+        return
 
     if args.simulate is not None or args.sem > 0 or args.msg > 0:
         shm_cnt = args.simulate if args.simulate is not None else 0

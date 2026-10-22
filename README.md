@@ -128,7 +128,8 @@ Deleting IPC resources indiscriminately can crash active production services (su
 IPC-Cleaner-Agent/
 ├── README.md                      # Comprehensive documentation
 ├── Makefile                       # Build, test, demo, and clean targets
-├── requirements.txt               # Dependencies (pydantic, rich, psutil, pytest)
+├── mcp_config.json                # MCP configuration for Claude Desktop & Cursor
+├── requirements.txt               # Dependencies (pydantic, rich, psutil, pytest, mcp)
 ├── ipc_agent.py                   # Standalone executable CLI entrypoint
 ├── demo.py                        # Live interactive end-to-end demonstration
 ├── demo_base_shell.py             # Base Shell master loop router simulation
@@ -143,6 +144,7 @@ IPC-Cleaner-Agent/
 │   ├── __init__.py
 │   ├── agent.py                   # IPCCleanerAgent main class & loop
 │   ├── cli.py                     # Rich CLI with --type (shm, msg, sem, all)
+│   ├── mcp_server.py              # Model Context Protocol (MCP) stdio server
 │   ├── base_shell_adapter.py      # Base Shell integration contract & adapter
 │   ├── models.py                  # Pydantic models (ShmSegment, SemaphoreSet, etc.)
 │   ├── core/                      # OS interface layer
@@ -157,12 +159,13 @@ IPC-Cleaner-Agent/
 │   └── llm/                       # LLM & Function Calling Layer
 │       ├── provider.py            # Gemini, OpenAI, & Local Semantic Router
 │       └── schemas.py             # JSON schemas for function declarations
-└── tests/                         # Full automated test suite (25 tests)
+└── tests/                         # Full automated test suite (33 tests)
     ├── test_parser.py             # Unit tests for Linux and Darwin parsers
     ├── test_syscalls.py           # Unit tests for raw libc syscalls
     ├── test_tools.py              # Unit tests for individual agent tools & safety locks
     ├── test_agent.py              # Unit tests for natural language intent routing
     ├── test_system_v_full.py      # Full System V coverage: SEM & MSG procfs, locks, E2E
+    ├── test_mcp_server.py         # Unit tests for MCP tools, resources, and protocol
     └── test_e2e_simulation.py     # End-to-end leak, audit, and purge lifecycle test
 ```
 
@@ -223,16 +226,62 @@ ipc-agent> Clean up any abandoned shared memory segments taking up RAM.
 
 # Direct diagnostic flags
 ./ipc_agent.py --summary
-./ipc_agent.py --list
-./ipc_agent.py --audit
-./ipc_agent.py --simulate 3 --size-mb 2
+./ipc_agent.py --list --type all
+./ipc_agent.py --audit --type all
+./ipc_agent.py --clean --type all --dry-run
+./ipc_agent.py --simulate 2 --sem 1 --msg 1
 ```
+
+---
+
+## 🔌 Model Context Protocol (MCP) Server
+
+The IPC Cleaner Agent implements the open [Model Context Protocol (MCP)](https://modelcontextprotocol.io), allowing **Claude Desktop, Cursor, Antigravity IDE, Windsurf, or Goose** to discover and invoke the agent's Linux IPC tools over standard input/output (`stdio`).
+
+### Running the MCP Server
+```bash
+# Via Python
+python -m ipc_cleaner.mcp_server
+
+# Or via Makefile
+make mcp
+```
+
+### Adding to Claude Desktop (`claude_desktop_config.json`)
+```json
+{
+  "mcpServers": {
+    "ipc-cleaner-agent": {
+      "command": "python",
+      "args": ["-m", "ipc_cleaner.mcp_server"]
+    }
+  }
+}
+```
+*(On Windows accessing WSL2, use `"command": "wsl"`, `"args": ["python3", "-m", "ipc_cleaner.mcp_server"]`)*
+
+### Adding to Cursor (`.cursor/mcp.json`)
+```json
+{
+  "mcpServers": {
+    "ipc-cleaner-agent": {
+      "command": "python",
+      "args": ["-m", "ipc_cleaner.mcp_server"]
+    }
+  }
+}
+```
+
+### Exposed MCP Capabilities:
+- **Tools (9)**: `audit_ipc_leaks`, `purge_abandoned_ipc`, `list_ipc_resources`, `get_ipc_summary`, `inspect_ipc_resource`, `purge_shared_memory`, `purge_semaphores`, `purge_message_queues`, `simulate_ipc_leak`.
+- **Resources (4)**: `ipc://summary`, `ipc://procfs/shm`, `ipc://procfs/sem`, `ipc://procfs/msg`.
+- **Prompts (2)**: `audit_and_remediate_leaks`, `safe_dry_run_preview`.
 
 ---
 
 ## 🧪 Test Suite Verification
 
-Run all automated unit and integration tests:
+Run all automated unit and integration tests (33 tests):
 ```bash
 python3 -m pytest tests/ -v
 ```
@@ -244,13 +293,29 @@ Verified test coverage:
 - ✅ `test_sem_create_and_destroy`: Direct `libc` `semget` & `semctl(IPC_RMID)` syscalls
 - ✅ `test_msg_create_and_destroy`: Direct `libc` `msgget` & `msgctl(IPC_RMID)` syscalls
 - ✅ `test_safety_check_prevents_active_segment_purge`: Attachment safety lock prevents killing active segments (`nattch > 0`)
+- ✅ `test_semaphore_waiter_lock_prevents_purge`: Prevents purging semaphores with active process waiters (`nwaiters > 0`)
+- ✅ `test_message_queue_messages_lock_prevents_purge`: Prevents purging queues with unread messages
+- ✅ `test_mock_proc_sysvipc_msg_parsing`: Direct Linux `/proc/sysvipc/msg` kernel virtual file parser
+- ✅ `test_mock_proc_sysvipc_sem_parsing`: Direct Linux `/proc/sysvipc/sem` kernel virtual file parser
+- ✅ `test_live_semctl_get_stats`: Live kernel `semctl` GETPID, GETNCNT, and GETZCNT queries
 - ✅ `test_dry_run_does_not_destroy_segment`: Dry-run mode previews without destroying segments
 - ✅ `test_list_ipc_resources`: Structure and formatting of active resources
 - ✅ `test_audit_ipc_leaks`: Quantitative leak reporting and RAM calculation
 - ✅ `test_get_ipc_summary`: High-level subsystem usage statistics
 - ✅ `test_clean_abandoned_prompt_routing`: Natural language routing for cleanup
+- ✅ `test_clean_semaphores_routing`: Natural language routing for semaphore purge
+- ✅ `test_list_message_queues_routing`: Natural language routing for message queue listing
+- ✅ `test_sem_and_msg_routing`: Natural language routing for multi-resource audit
 - ✅ `test_dry_run_prompt_routing`: Natural language routing for dry-run
 - ✅ `test_audit_prompt_routing`: Natural language routing for audit
 - ✅ `test_list_prompt_routing`: Natural language routing for list
 - ✅ `test_summary_prompt_routing`: Natural language routing for summary
-- ✅ `test_e2e_leak_and_remediation_lifecycle`: Complete lifecycle: leak injection -> audit -> dry-run -> purge -> OS verification
+- ✅ `test_initialize_handshake`: MCP JSON-RPC protocol initialization & capability negotiation
+- ✅ `test_tools_list`: MCP tool discovery (9 tools registered)
+- ✅ `test_tools_call_get_ipc_summary`: MCP tool execution and structured response delivery
+- ✅ `test_tools_call_unknown_tool`: MCP error handling for missing tools
+- ✅ `test_resources_list_and_read`: MCP URI resource reading (`ipc://summary`, `ipc://procfs/shm`, etc.)
+- ✅ `test_prompts_list_and_get`: Predefined MCP agent workflow prompts
+- ✅ `test_official_sdk_app_initialization`: Official Anthropic MCP Python SDK app configuration
+- ✅ `test_multi_resource_e2e_lifecycle`: Live Linux multi-resource leak, audit, and autonomous purge lifecycle
+- ✅ `test_e2e_leak_and_remediation_lifecycle`: End-to-end leak injection -> audit -> dry-run -> purge -> OS verification
