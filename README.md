@@ -107,14 +107,18 @@ The agent interfaces with the operating system through multiple layers:
 
 ## 🛡️ Safety Architecture
 
-Deleting shared memory segments indiscriminately can crash active production services (such as PostgreSQL, Redis, or Apache). The IPC Cleaner Agent implements multi-tier protections:
+Deleting IPC resources indiscriminately can crash active production services (such as PostgreSQL, Redis, or Apache). The IPC Cleaner Agent implements multi-tier protections across all System V subsystems:
 
-1. **Active Attachment Lock (`nattch > 0`)**:
+1. **Active Attachment Lock (`nattch > 0` for Shared Memory)**:
    - The agent strictly checks the current attachment count. If `nattch > 0`, the segment is locked and deletion is refused unless explicit `force=True` is provided.
-2. **Process Liveness Correlation**:
-   - A segment is only marked as a high-confidence leak if `nattch == 0` **AND** the creator process has exited or the segment is marked with the `dest` (destruction pending) flag.
-3. **Dry Run Support**:
-   - Users can preview what resources will be deleted and calculate potential memory savings without modifying system state by issuing prompts like *"Dry run cleanup of abandoned memory"*.
+2. **Active Process Waiter Lock (`nwaiters > 0` for Semaphores)**:
+   - Evaluates `semctl(semid, semnum, GETNCNT)` and `GETZCNT`. If processes are actively suspended waiting for semaphore state changes, deletion is locked to prevent concurrency corruption.
+3. **Unread Message Buffer Lock (`messages > 0` for Message Queues)**:
+   - If a queue contains buffered, unconsumed messages, deletion is refused without explicit `force=True`.
+4. **Process Liveness Correlation**:
+   - A resource is only marked as a high-confidence leak if active attachments/waiters are zero **AND** the creator or last operator process has terminated or exited.
+5. **Dry Run Support**:
+   - Users can preview what resources will be deleted and calculate potential memory savings without modifying system state by issuing prompts like *"Dry run cleanup of abandoned IPC resources"*.
 
 ---
 
@@ -138,8 +142,9 @@ IPC-Cleaner-Agent/
 ├── ipc_cleaner/                   # Python package
 │   ├── __init__.py
 │   ├── agent.py                   # IPCCleanerAgent main class & loop
+│   ├── cli.py                     # Rich CLI with --type (shm, msg, sem, all)
 │   ├── base_shell_adapter.py      # Base Shell integration contract & adapter
-│   ├── models.py                  # Pydantic models (ShmSegment, AuditReport, etc.)
+│   ├── models.py                  # Pydantic models (ShmSegment, SemaphoreSet, etc.)
 │   ├── core/                      # OS interface layer
 │   │   ├── parser.py              # Universal ipcs & /proc/sysvipc parser
 │   │   ├── executor.py            # ipcrm & libc syscall safe executor
@@ -147,16 +152,17 @@ IPC-Cleaner-Agent/
 │   │   └── process.py             # Process liveness & PID metadata resolver
 │   ├── tools/                     # Function Calling Tools
 │   │   ├── audit.py               # audit_ipc_leaks, list_ipc_resources, etc.
-│   │   ├── cleaner.py             # purge_abandoned_ipc, purge_shared_memory, etc.
+│   │   ├── cleaner.py             # purge_abandoned_ipc, purge_semaphores, etc.
 │   │   └── simulator.py           # simulate_ipc_leak test harness
 │   └── llm/                       # LLM & Function Calling Layer
 │       ├── provider.py            # Gemini, OpenAI, & Local Semantic Router
 │       └── schemas.py             # JSON schemas for function declarations
-└── tests/                         # Full automated test suite (16 tests)
+└── tests/                         # Full automated test suite (25 tests)
     ├── test_parser.py             # Unit tests for Linux and Darwin parsers
     ├── test_syscalls.py           # Unit tests for raw libc syscalls
     ├── test_tools.py              # Unit tests for individual agent tools & safety locks
     ├── test_agent.py              # Unit tests for natural language intent routing
+    ├── test_system_v_full.py      # Full System V coverage: SEM & MSG procfs, locks, E2E
     └── test_e2e_simulation.py     # End-to-end leak, audit, and purge lifecycle test
 ```
 
@@ -169,7 +175,7 @@ IPC-Cleaner-Agent/
 # Build C helpers and run the test suite
 make test
 ```
-*Output: 16 passed tests in ~0.2s.*
+*Output: 25 passed tests in ~0.5s.*
 
 ### 2. Run the Live End-to-End Demo
 ```bash

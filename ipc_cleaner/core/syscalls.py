@@ -76,6 +76,30 @@ def libc_semctl_rmid(semid: int) -> Tuple[bool, Optional[str]]:
     return False, f"semctl error {errno}: {os.strerror(errno)}"
 
 
+def libc_semctl_get_stats(semid: int, semnum: int = 0) -> Tuple[Optional[int], int, int]:
+    """
+    Directly queries semaphore statistics via semctl:
+    GETPID (11): PID of last process to perform semop
+    GETNCNT (14): Number of processes waiting for semval to become greater than current value
+    GETZCNT (15): Number of processes waiting for semval to become 0
+    Returns: (last_pid, ncount, zcount)
+    """
+    if not _libc or not hasattr(_libc, "semctl"):
+        return None, 0, 0
+
+    try:
+        GETPID = 11
+        GETNCNT = 14
+        GETZCNT = 15
+        last_pid = _libc.semctl(ctypes.c_int(semid), ctypes.c_int(semnum), ctypes.c_int(GETPID))
+        ncnt = _libc.semctl(ctypes.c_int(semid), ctypes.c_int(semnum), ctypes.c_int(GETNCNT))
+        zcnt = _libc.semctl(ctypes.c_int(semid), ctypes.c_int(semnum), ctypes.c_int(GETZCNT))
+        valid_pid = int(last_pid) if last_pid > 0 else None
+        return valid_pid, max(0, int(ncnt)), max(0, int(zcnt))
+    except Exception:
+        return None, 0, 0
+
+
 def libc_msgctl_rmid(msqid: int) -> Tuple[bool, Optional[str]]:
     """Directly invokes msgctl(msqid, IPC_RMID, NULL) system call to remove message queue."""
     if not _libc or not hasattr(_libc, "msgctl"):

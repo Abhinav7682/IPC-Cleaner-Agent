@@ -48,6 +48,14 @@ def simulate_ipc_leak(
             res = subprocess.run(cmd, capture_output=True, text=True, check=True)
             data = json.loads(res.stdout.strip())
             total_ram = len(data.get("shm", [])) * size_bytes
+            parts = []
+            if data.get("shm"):
+                parts.append(f"{len(data['shm'])} abandoned SHM segments ({format_bytes_human(total_ram)})")
+            if data.get("sem"):
+                parts.append(f"{len(data['sem'])} semaphores")
+            if data.get("msg"):
+                parts.append(f"{len(data['msg'])} message queues")
+            desc = ", ".join(parts) if parts else "0 resources"
             return {
                 "status": "success",
                 "method": "c_binary",
@@ -59,9 +67,8 @@ def simulate_ipc_leak(
                 "total_leaked_ram_bytes": total_ram,
                 "total_leaked_ram_human": format_bytes_human(total_ram),
                 "message": (
-                    f"Successfully simulated {len(data.get('shm', []))} abandoned SHM segments "
-                    f"({format_bytes_human(total_ram)}) and {len(data.get('sem', []))} semaphores. "
-                    f"Creator PID has exited, leaving nattch=0."
+                    f"Successfully simulated {desc}. "
+                    f"Creator PID has exited, leaving resources abandoned."
                 )
             }
         except Exception:
@@ -134,8 +141,9 @@ print(json.dumps({{'pid': os.getpid(), 'shm': shm_ids, 'sem': sem_ids, 'msg': ms
             "total_leaked_ram_bytes": total_ram,
             "total_leaked_ram_human": format_bytes_human(total_ram),
             "message": (
-                f"Successfully simulated {len(shm_ids)} abandoned SHM segments "
-                f"({format_bytes_human(total_ram)}) via subshell."
+                f"Successfully simulated "
+                f"{', '.join(filter(None, [f'{len(shm_ids)} abandoned SHM segments ({format_bytes_human(total_ram)})' if shm_ids else '', f'{len(sem_ids)} semaphores' if sem_ids else '', f'{len(msg_ids)} message queues' if msg_ids else ''])) or '0 resources'} "
+                f"via subshell."
             )
         }
     except Exception as e:

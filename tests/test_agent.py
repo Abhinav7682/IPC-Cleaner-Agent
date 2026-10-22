@@ -37,6 +37,24 @@ class TestAgent(unittest.TestCase):
         self.assertIn("list_ipc_resources", tool_names)
         self.assertIn("ACTIVE IPC RESOURCES", result["response"])
 
+    def test_sem_and_msg_routing(self):
+        result = self.agent.handle_query("Audit semaphores and message queues for leaks")
+        tool_names = [tc["tool"] for tc in result["tool_calls"]]
+        self.assertIn("audit_ipc_leaks", tool_names)
+        self.assertEqual(result["tool_calls"][0]["arguments"].get("resource_type"), "all")
+
+    def test_clean_semaphores_routing(self):
+        result = self.agent.handle_query("Clean up abandoned semaphores")
+        tool_names = [tc["tool"] for tc in result["tool_calls"]]
+        self.assertIn("purge_abandoned_ipc", tool_names)
+        self.assertEqual(result["tool_calls"][0]["arguments"].get("resource_type"), "sem")
+
+    def test_list_message_queues_routing(self):
+        result = self.agent.handle_query("List active message queues")
+        tool_names = [tc["tool"] for tc in result["tool_calls"]]
+        self.assertIn("list_ipc_resources", tool_names)
+        self.assertEqual(result["tool_calls"][0]["arguments"].get("resource_type"), "msg")
+
     def test_summary_prompt_routing(self):
         result = self.agent.handle_query("Get IPC subsystem summary")
         tool_names = [tc["tool"] for tc in result["tool_calls"]]
