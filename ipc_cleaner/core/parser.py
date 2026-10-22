@@ -14,8 +14,10 @@ from ipc_cleaner.models import (
     MessageQueue,
     SemaphoreSet,
     ShmSegment,
+    format_bytes_human,
 )
 from ipc_cleaner.core.process import inspect_pid, is_pid_dead
+from ipc_cleaner.core.syscalls import libc_semctl_get_stats
 
 
 class IPCParser:
@@ -67,17 +69,59 @@ class IPCParser:
             pass
         return pid_map
 
+    @staticmethod
+    def run_ipcs_msg_pids() -> Dict[int, Tuple[Optional[int], Optional[int]]]:
+        """Runs 'ipcs -q -p' on Linux to map msqid -> (lspid, lrpid)."""
+        pid_map: Dict[int, Tuple[Optional[int], Optional[int]]] = {}
+        try:
+            res = subprocess.run(
+                ["ipcs", "-q", "-p"],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            lines = res.stdout.splitlines()
+            header_found = False
+            for line in lines:
+                parts = line.split()
+                if not parts:
+                    continue
+                if "msqid" in [p.lower() for p in parts] and "lspid" in [p.lower() for p in parts]:
+                    header_found = True
+                    continue
+                if header_found and parts[0].isdigit():
+                    try:
+                        msqid = int(parts[0])
+                        if len(parts) >= 4:
+                            lspid = int(parts[2]) if parts[2].isdigit() and int(parts[2]) > 0 else None
+                            lrpid = int(parts[3]) if parts[3].isdigit() and int(parts[3]) > 0 else None
+                        elif len(parts) >= 3:
+                            lspid = int(parts[1]) if parts[1].isdigit() and int(parts[1]) > 0 else None
+                            lrpid = int(parts[2]) if parts[2].isdigit() and int(parts[2]) > 0 else None
+                        else:
+                            lspid, lrpid = None, None
+                        pid_map[msqid] = (lspid, lrpid)
+                    except (ValueError, IndexError):
+                        pass
+        except Exception:
+            pass
+        return pid_map
+
     @classmethod
-    def parse_proc_sysvipc_shm(cls) -> List[ShmSegment]:
-        """Directly parses Linux /proc/sysvipc/shm virtual file if present."""
+    def parse_proc_sysvipc_shm(cls, content: Optional[str] = None) -> List[ShmSegment]:
+        """Directly parses Linux /proc/sysvipc/shm virtual file if present (or content string)."""
         proc_file = "/proc/sysvipc/shm"
         segments: List[ShmSegment] = []
-        if not os.path.exists(proc_file):
-            return segments
 
         try:
-            with open(proc_file, "r") as f:
-                lines = f.readlines()
+            if content is not None:
+                lines = content.strip().splitlines()
+            elif os.path.exists(proc_file):
+                with open(proc_file, "r") as f:
+                    lines = f.readlines()
+            else:
+                return segments
+
             if len(lines) < 2:
                 return segments
 
@@ -113,6 +157,111 @@ class IPCParser:
         except Exception:
             pass
         return segments
+
+    @classmethod
+    def parse_proc_sysvipc_msg(cls, content: Optional[str] = None) -> List[MessageQueue]:
+        """Directly parses Linux /proc/sysvipc/msg virtual file if present (or content string)."""
+        proc_file = "/proc/sysvipc/msg"
+        queues: List[MessageQueue] = []
+
+        try:
+            if content is not None:
+                lines = content.strip().splitlines()
+            elif os.path.exists(proc_file):
+                with open(proc_file, "r") as f:
+                    lines = f.readlines()
+            else:
+                return queues
+
+            if len(lines) < 2:
+                return queues
+
+            # Header: key msqid perms cbytes qnum lspid lrpid uid gid cuid cgid stime rtime ctime
+            for line in lines[1:]:
+                parts = line.split()
+                if len(parts) < 7:
+                    continue
+                try:
+                    key = hex(int(parts[0])) if parts[0].isdigit() else parts[0]
+                    msqid = int(parts[1])
+                    perms = parts[2]
+                    cbytes = int(parts[3])
+                    qnum = int(parts[4])
+                    lspid = int(parts[5]) if parts[5].isdigit() and int(parts[5]) > 0 else None
+                    lrpid = int(parts[6]) if parts[6].isdigit() and int(parts[6]) > 0 else None
+                    owner = parts[7] if len(parts) > 7 else "unknown"
+
+                    msg = MessageQueue(
+                        id=msqid,
+                        key=key,
+                        owner=owner,
+                        perms=perms,
+                        used_bytes=cbytes,
+                        messages=qnum,
+                        lspid=lspid,
+                        lrpid=lrpid,
+                    )
+                    cls._classify_msg_leak(msg)
+                    queues.append(msg)
+                except (ValueError, IndexError):
+                    continue
+        except Exception:
+            pass
+        return queues
+
+    @classmethod
+    def parse_proc_sysvipc_sem(cls, content: Optional[str] = None) -> List[SemaphoreSet]:
+        """Directly parses Linux /proc/sysvipc/sem virtual file if present (or content string)."""
+        proc_file = "/proc/sysvipc/sem"
+        sem_list: List[SemaphoreSet] = []
+
+        try:
+            if content is not None:
+                lines = content.strip().splitlines()
+            elif os.path.exists(proc_file):
+                with open(proc_file, "r") as f:
+                    lines = f.readlines()
+            else:
+                return sem_list
+
+            if len(lines) < 2:
+                return sem_list
+
+            # Header: key semid perms nsems uid gid cuid cgid otime ctime
+            for line in lines[1:]:
+                parts = line.split()
+                if len(parts) < 5:
+                    continue
+                try:
+                    key = hex(int(parts[0])) if parts[0].isdigit() else parts[0]
+                    semid = int(parts[1])
+                    perms = parts[2]
+                    nsems = int(parts[3])
+                    owner = parts[4] if len(parts) > 4 else "unknown"
+                    otime = parts[8] if len(parts) > 8 else None
+                    ctime = parts[9] if len(parts) > 9 else None
+
+                    # Query semctl for last operator PID and waiters count
+                    last_pid, ncnt, zcnt = libc_semctl_get_stats(semid)
+
+                    sem = SemaphoreSet(
+                        id=semid,
+                        key=key,
+                        owner=owner,
+                        perms=perms,
+                        nsems=nsems,
+                        lpid=last_pid,
+                        nwaiters=ncnt + zcnt,
+                        otime=otime,
+                        ctime=ctime,
+                    )
+                    cls._classify_sem_leak(sem)
+                    sem_list.append(sem)
+                except (ValueError, IndexError):
+                    continue
+        except Exception:
+            pass
+        return sem_list
 
     @classmethod
     def parse_ipcs_output(
@@ -378,6 +527,9 @@ class IPCParser:
                     used_bytes = int(col_dict.get("used-bytes", col_dict.get("bytes", "0")))
                     messages = int(col_dict.get("messages", col_dict.get("qnum", "0")))
 
+                    msg_pids = cls.run_ipcs_msg_pids()
+                    lspid, lrpid = msg_pids.get(msqid, (None, None))
+
                     msg = MessageQueue(
                         id=msqid,
                         key=key,
@@ -385,6 +537,8 @@ class IPCParser:
                         perms=perms,
                         used_bytes=used_bytes,
                         messages=messages,
+                        lspid=lspid,
+                        lrpid=lrpid,
                     )
                     cls._classify_msg_leak(msg)
                     msg_list.append(msg)
@@ -398,12 +552,16 @@ class IPCParser:
                     perms = col_dict.get("perms", "")
                     nsems = int(col_dict.get("nsems", "1"))
 
+                    last_pid, ncnt, zcnt = libc_semctl_get_stats(semid)
+
                     sem = SemaphoreSet(
                         id=semid,
                         key=key,
                         owner=owner,
                         perms=perms,
                         nsems=nsems,
+                        lpid=last_pid,
+                        nwaiters=ncnt + zcnt,
                     )
                     cls._classify_sem_leak(sem)
                     sem_list.append(sem)
@@ -453,48 +611,120 @@ class IPCParser:
     def _classify_msg_leak(cls, msg: MessageQueue) -> None:
         """Evaluates whether a message queue is abandoned."""
         msg.creator_process = inspect_pid(msg.cpid)
-        cpid_dead = is_pid_dead(msg.cpid)
+        cpid_dead = is_pid_dead(msg.cpid) if msg.cpid else None
+        lspid_dead = is_pid_dead(msg.lspid) if msg.lspid else None
+        lrpid_dead = is_pid_dead(msg.lrpid) if msg.lrpid else None
 
-        if cpid_dead and msg.messages == 0:
-            msg.is_abandoned = True
-            msg.leak_confidence = LeakConfidence.HIGH
-            msg.leak_reasons = [
-                "Empty message queue (0 messages)",
-                f"Creator process (PID {msg.cpid or 'unknown'}) is terminated"
-            ]
-        elif msg.messages == 0:
-            msg.is_abandoned = True
-            msg.leak_confidence = LeakConfidence.MEDIUM
-            msg.leak_reasons = ["Zero buffered messages and idle"]
+        reasons = []
+        is_empty = (msg.messages == 0)
+        has_dead_operator = (lspid_dead is True or lrpid_dead is True or cpid_dead is True)
+        all_operators_dead = (
+            (lspid_dead is True or msg.lspid is None) and
+            (lrpid_dead is True or msg.lrpid is None) and
+            (cpid_dead is True or msg.cpid is None)
+        )
+
+        if is_empty:
+            reasons.append("Empty message queue (0 messages)")
+            if has_dead_operator or (msg.lspid is None and msg.lrpid is None and msg.cpid is None):
+                if msg.lspid and lspid_dead:
+                    reasons.append(f"Last sender PID {msg.lspid} has terminated")
+                if msg.lrpid and lrpid_dead:
+                    reasons.append(f"Last receiver PID {msg.lrpid} has terminated")
+                if msg.cpid and cpid_dead:
+                    reasons.append(f"Creator PID {msg.cpid} has terminated")
+                msg.is_abandoned = True
+                msg.leak_confidence = LeakConfidence.HIGH
+            else:
+                reasons.append("Queue is idle with 0 messages")
+                msg.is_abandoned = True
+                msg.leak_confidence = LeakConfidence.MEDIUM
         else:
-            msg.is_abandoned = False
-            msg.leak_confidence = LeakConfidence.NONE
+            # Queue contains unread messages
+            if all_operators_dead and (msg.lspid or msg.lrpid or msg.cpid):
+                reasons.append(f"Contains {msg.messages} unread messages ({format_bytes_human(msg.used_bytes)})")
+                reasons.append("All sender, receiver, and creator processes have terminated (orphan queue)")
+                msg.is_abandoned = True
+                msg.leak_confidence = LeakConfidence.HIGH
+            else:
+                msg.is_abandoned = False
+                msg.leak_confidence = LeakConfidence.NONE
+
+        msg.leak_reasons = reasons
 
     @classmethod
     def _classify_sem_leak(cls, sem: SemaphoreSet) -> None:
         """Evaluates whether a semaphore set is abandoned."""
         sem.creator_process = inspect_pid(sem.cpid)
+        sem.last_process = inspect_pid(sem.lpid)
         cpid_dead = is_pid_dead(sem.cpid)
+        lpid_dead = is_pid_dead(sem.lpid)
 
-        if sem.cpid and cpid_dead:
-            sem.is_abandoned = True
-            sem.leak_confidence = LeakConfidence.HIGH
-            sem.leak_reasons = [f"Creator process (PID {sem.cpid}) is dead"]
-        else:
+        # 1. Active waiting processes: strictly active
+        if sem.nwaiters > 0:
             sem.is_abandoned = False
             sem.leak_confidence = LeakConfidence.NONE
+            return
+
+        reasons = ["Zero active waiting processes (nwaiters=0)"]
+
+        # 2. Check last operator PID / creator PID liveness
+        if sem.lpid and lpid_dead:
+            reasons.append(f"Last operator process (PID {sem.lpid}) has exited/terminated")
+            sem.is_abandoned = True
+            sem.leak_confidence = LeakConfidence.HIGH
+            sem.leak_reasons = reasons
+            return
+
+        if sem.cpid and cpid_dead:
+            reasons.append(f"Creator process (PID {sem.cpid}) has exited/terminated")
+            sem.is_abandoned = True
+            sem.leak_confidence = LeakConfidence.HIGH
+            sem.leak_reasons = reasons
+            return
+
+        # 3. If otime is 0 or "Not set", it was allocated and never operated on
+        if sem.otime in ("0", "Not set", None) and (sem.lpid is None or sem.lpid == 0):
+            reasons.append("Semaphore set never operated on (otime=0/Not set) and zero waiters")
+            sem.is_abandoned = True
+            sem.leak_confidence = LeakConfidence.MEDIUM
+            sem.leak_reasons = reasons
+            return
+
+        # 4. If operator is alive, it is active
+        if sem.lpid and not lpid_dead:
+            sem.is_abandoned = False
+            sem.leak_confidence = LeakConfidence.NONE
+            return
+
+        sem.is_abandoned = True
+        sem.leak_confidence = LeakConfidence.LOW
+        sem.leak_reasons = reasons
 
     @classmethod
     def fetch_all(cls) -> Tuple[List[ShmSegment], List[MessageQueue], List[SemaphoreSet]]:
         """Main entry point to fetch and parse all current system IPC objects."""
-        # On Linux, try /proc/sysvipc/shm if present
-        if os.path.exists("/proc/sysvipc/shm"):
-            shm_proc = cls.parse_proc_sysvipc_shm()
-            # Still run ipcs for semaphores and message queues
-            raw_ipcs = cls.run_ipcs("-a")
-            pid_map = cls.run_ipcs_pids()
-            _, msg_list, sem_list = cls.parse_ipcs_output(raw_ipcs, pid_map)
-            return shm_proc, msg_list, sem_list
+        # On Linux, try /proc/sysvipc/ if present for native non-subshell parsing
+        if (
+            os.path.exists("/proc/sysvipc/shm")
+            or os.path.exists("/proc/sysvipc/msg")
+            or os.path.exists("/proc/sysvipc/sem")
+        ):
+            shm_proc = cls.parse_proc_sysvipc_shm() if os.path.exists("/proc/sysvipc/shm") else []
+            msg_proc = cls.parse_proc_sysvipc_msg() if os.path.exists("/proc/sysvipc/msg") else []
+            sem_proc = cls.parse_proc_sysvipc_sem() if os.path.exists("/proc/sysvipc/sem") else []
+
+            # If msg or sem weren't found in procfs, fallback to ipcs
+            if not msg_proc or not sem_proc:
+                raw_ipcs = cls.run_ipcs("-a")
+                pid_map = cls.run_ipcs_pids()
+                _, msg_ipcs, sem_ipcs = cls.parse_ipcs_output(raw_ipcs, pid_map)
+                if not msg_proc:
+                    msg_proc = msg_ipcs
+                if not sem_proc:
+                    sem_proc = sem_ipcs
+
+            return shm_proc, msg_proc, sem_proc
 
         # Otherwise parse from standard ipcs
         raw_ipcs = cls.run_ipcs("-a")

@@ -39,17 +39,17 @@ def main():
     print(baseline["response"])
     time.sleep(1)
 
-    # 2. Simulate Leaked Shared Memory Segments
-    print_section("STEP 2: SIMULATE ABANDONED IPC MEMORY LEAKS")
-    print("Simulating orphaned shared memory segments where creator processes have terminated...")
-    sim_prompt = "Simulate 3 leaked shared memory segments of 2MB"
+    # 2. Simulate Leaked System V IPC Resources (SHM, SEM, MSG)
+    print_section("STEP 2: SIMULATE ABANDONED SYSTEM V IPC LEAKS")
+    print("Simulating orphaned resources (SHM segments, Semaphores, Message Queues) with dead creator PIDs...")
+    sim_prompt = "Simulate 2 leaked shared memory segments of 2MB, semaphores, and message queues"
     print(f"User Prompt: \"{sim_prompt}\"")
     sim_result = agent.handle_query(sim_prompt)
     print(sim_result["response"])
     time.sleep(1)
 
-    # 3. Audit Leaks (Inspect attachment count nattch == 0)
-    print_section("STEP 3: AUDIT SYSTEM V IPC FOR LEAKS")
+    # 3. Audit Leaks Across All Subsystems
+    print_section("STEP 3: AUDIT SYSTEM V IPC FOR LEAKS (SHM, SEM, MSG)")
     audit_prompt = "Audit System V IPC for leaks"
     print(f"User Prompt: \"{audit_prompt}\"")
     audit_result = agent.handle_query(audit_prompt)
@@ -58,15 +58,15 @@ def main():
 
     # 4. Dry Run Preview
     print_section("STEP 4: DRY RUN CLEANUP (SAFETY VERIFICATION)")
-    dry_prompt = "Dry run cleanup of abandoned shared memory segments"
+    dry_prompt = "Dry run cleanup of all abandoned IPC resources"
     print(f"User Prompt: \"{dry_prompt}\"")
     dry_result = agent.handle_query(dry_prompt)
     print(dry_result["response"])
     time.sleep(1)
 
-    # 5. The Assignment Prompt: Autonomous Cleanup!
+    # 5. Autonomous Multi-Resource Cleanup
     print_section("STEP 5: AUTONOMOUS REMEDIATION VIA NATURAL LANGUAGE")
-    target_prompt = "Clean up any abandoned shared memory segments taking up RAM."
+    target_prompt = "Clean up any abandoned shared memory segments, semaphores, and message queues."
     print(f"User Prompt: \"{target_prompt}\"")
     print("Agent is evaluating tool schemas and executing System Calls...")
     clean_result = agent.handle_query(target_prompt)
@@ -77,7 +77,7 @@ def main():
     print_section("STEP 6: POST-CLEANUP VERIFICATION")
     post_summary = agent.handle_query("Get IPC summary")
     print(post_summary["response"])
-    print("\n✅ Verification complete: Leaked memory reclaimed; running services remain untouched.")
+    print("\n✅ Verification complete: All leaked resources reclaimed; running services remain untouched.")
 
 
 if __name__ == "__main__":

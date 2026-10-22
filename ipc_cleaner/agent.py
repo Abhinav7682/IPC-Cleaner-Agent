@@ -129,25 +129,42 @@ class IPCCleanerAgent:
 
             if tool_name == "purge_abandoned_ipc":
                 shm_info = result.get("shared_memory", {})
+                msg_info = result.get("message_queues", {})
+                sem_info = result.get("semaphores", {})
+
                 purged_shm = shm_info.get("purged_ids", [])
+                purged_msg = msg_info.get("purged_ids", [])
+                purged_sem = sem_info.get("purged_ids", [])
+
                 reclaimed = result.get("reclaimed_ram_human", "0 B")
                 is_dry_run = result.get("dry_run", False)
 
                 if is_dry_run:
-                    lines.append(f"🔍 [DRY RUN AUDIT] Scanned System V IPC resources for abandoned segments.")
+                    lines.append("🔍 [DRY RUN AUDIT] Scanned System V IPC resources for abandoned leaks:")
                     if purged_shm:
-                        lines.append(f"• Candidate SHM IDs with zero attachments: {purged_shm}")
-                        lines.append(f"• Potential RAM to reclaim: {reclaimed}")
-                    else:
-                        lines.append(f"• No abandoned shared memory segments found matching criteria.")
+                        lines.append(f"• Candidate SHM IDs (nattch=0): {purged_shm} (Potential RAM to reclaim: {reclaimed})")
+                    if purged_msg:
+                        lines.append(f"• Candidate Message Queue IDs: {purged_msg}")
+                    if purged_sem:
+                        lines.append(f"• Candidate Semaphore Set IDs: {purged_sem}")
+                    if not purged_shm and not purged_msg and not purged_sem:
+                        lines.append("• No abandoned System V IPC resources detected matching criteria.")
                 else:
-                    if purged_shm:
-                        lines.append(f"🧹 [CLEANUP COMPLETE] Successfully purged {len(purged_shm)} abandoned shared memory segment(s):")
-                        lines.append(f"• Purged SHMID(s): {', '.join(str(i) for i in purged_shm)}")
-                        lines.append(f"• System Calls executed: ipcrm -m / shmctl(shmid, IPC_RMID)")
-                        lines.append(f"• Reclaimed RAM: {reclaimed}")
+                    total_purged = len(purged_shm) + len(purged_msg) + len(purged_sem)
+                    if total_purged > 0:
+                        lines.append(f"🧹 [CLEANUP COMPLETE] Successfully purged {total_purged} abandoned System V IPC resource(s):")
+                        if purged_shm:
+                            lines.append(f"• Purged SHMID(s): {', '.join(str(i) for i in purged_shm)}")
+                            lines.append("  Syscalls: ipcrm -m / shmctl(shmid, IPC_RMID)")
+                            lines.append(f"  Reclaimed RAM: {reclaimed}")
+                        if purged_msg:
+                            lines.append(f"• Purged Message Queue(s): {', '.join(str(i) for i in purged_msg)}")
+                            lines.append("  Syscalls: ipcrm -q / msgctl(msqid, IPC_RMID)")
+                        if purged_sem:
+                            lines.append(f"• Purged Semaphore Set(s): {', '.join(str(i) for i in purged_sem)}")
+                            lines.append("  Syscalls: ipcrm -s / semctl(semid, IPC_RMID)")
                     else:
-                        lines.append(f"✅ [CLEANUP CHECK] Scanned System V IPC: No abandoned shared memory segments with zero attachments detected.")
+                        lines.append("✅ [CLEANUP CHECK] Scanned System V IPC: No abandoned resources detected.")
 
             elif tool_name == "purge_shared_memory":
                 purged = result.get("purged_ids", [])
@@ -157,35 +174,77 @@ class IPCCleanerAgent:
                 if failed:
                     lines.append(f"⚠️ Failed to purge: {failed}")
 
+            elif tool_name == "purge_message_queues":
+                purged = result.get("purged_ids", [])
+                failed = result.get("failed_ids", {})
+                reclaimed = result.get("reclaimed_bytes_human", "0 B")
+                lines.append(f"🧹 Purged message queue(s) {purged}. Reclaimed buffer bytes: {reclaimed}.")
+                if failed:
+                    lines.append(f"⚠️ Failed to purge: {failed}")
+
+            elif tool_name == "purge_semaphores":
+                purged = result.get("purged_ids", [])
+                failed = result.get("failed_ids", {})
+                lines.append(f"🧹 Purged semaphore set(s) {purged}.")
+                if failed:
+                    lines.append(f"⚠️ Failed to purge: {failed}")
+
             elif tool_name == "audit_ipc_leaks":
                 reclaimable = result.get("reclaimable_ram_human", "0 B")
                 leaked_shm = result.get("abandoned_shm", [])
-                lines.append(f"🔍 [AUDIT REPORT] System V IPC Leak Analysis:")
-                lines.append(f"• Total SHM Segments: {result.get('total_shm_count')}")
-                lines.append(f"• Abandoned SHM Segments (nattch=0): {len(leaked_shm)}")
-                lines.append(f"• Reclaimable RAM: {reclaimable}")
+                leaked_msg = result.get("abandoned_msg", [])
+                leaked_sem = result.get("abandoned_sem", [])
+
+                lines.append("🔍 [AUDIT REPORT] System V IPC Leak Analysis:")
+                lines.append(f"• Total SHM: {result.get('total_shm_count')} | Abandoned (nattch=0): {len(leaked_shm)} | Reclaimable RAM: {reclaimable}")
                 for s in leaked_shm:
                     lines.append(f"  - SHMID {s.get('id')} ({s.get('bytes')} bytes) | Owner: {s.get('owner')} | Confidence: {s.get('leak_confidence')}")
 
+                if leaked_msg:
+                    lines.append(f"• Abandoned Message Queues: {len(leaked_msg)}")
+                    for m in leaked_msg:
+                        lines.append(f"  - MSQID {m.get('id')} (Msgs: {m.get('messages')}, Bytes: {m.get('used_bytes')}) | Confidence: {m.get('leak_confidence')}")
+
+                if leaked_sem:
+                    lines.append(f"• Abandoned Semaphores: {len(leaked_sem)}")
+                    for sm in leaked_sem:
+                        lines.append(f"  - SEMID {sm.get('id')} (NSEMS: {sm.get('nsems')}) | Owner: {sm.get('owner')} | Confidence: {sm.get('leak_confidence')}")
+
             elif tool_name == "get_ipc_summary":
                 shm_stat = result.get("shared_memory", {})
-                lines.append(f"📊 [IPC SUBSYSTEM SUMMARY]")
+                lines.append("📊 [IPC SUBSYSTEM SUMMARY]")
                 lines.append(f"• Active Shared Memory: {shm_stat.get('total_segments')} segments ({shm_stat.get('total_ram_human')})")
                 lines.append(f"• Abandoned SHM: {shm_stat.get('abandoned_segments')} segments ({shm_stat.get('leaked_ram_human')} reclaimable)")
-                lines.append(f"• Message Queues: {result.get('message_queues', {}).get('total_queues')}")
-                lines.append(f"• Semaphores: {result.get('semaphores', {}).get('total_sets')}")
+                lines.append(f"• Message Queues: {result.get('message_queues', {}).get('total_queues', 0)}")
+                lines.append(f"• Semaphores: {result.get('semaphores', {}).get('total_sets', 0)}")
 
             elif tool_name == "list_ipc_resources":
                 shm_items = result.get("shared_memory", [])
+                msg_items = result.get("message_queues", [])
+                sem_items = result.get("semaphores", [])
+
                 lines.append(f"📋 [ACTIVE IPC RESOURCES] ({result.get('filter')})")
-                lines.append(f"Shared Memory ({len(shm_items)}):")
-                for s in shm_items:
-                    lines.append(f"  ID: {s.get('id')} | Key: {s.get('key')} | Owner: {s.get('owner')} | Bytes: {s.get('bytes')} | Attachments: {s.get('nattch')}")
+                if shm_items:
+                    lines.append(f"Shared Memory ({len(shm_items)}):")
+                    for s in shm_items:
+                        lines.append(f"  ID: {s.get('id')} | Key: {s.get('key')} | Owner: {s.get('owner')} | Bytes: {s.get('bytes')} | Attachments: {s.get('nattch')}")
+                if msg_items:
+                    lines.append(f"Message Queues ({len(msg_items)}):")
+                    for m in msg_items:
+                        lines.append(f"  ID: {m.get('id')} | Key: {m.get('key')} | Owner: {m.get('owner')} | Messages: {m.get('messages')} | Bytes: {m.get('used_bytes')}")
+                if sem_items:
+                    lines.append(f"Semaphores ({len(sem_items)}):")
+                    for sm in sem_items:
+                        lines.append(f"  ID: {sm.get('id')} | Key: {sm.get('key')} | Owner: {sm.get('owner')} | NSEMS: {sm.get('nsems')}")
 
             elif tool_name == "simulate_ipc_leak":
                 lines.append(f"🧪 [SIMULATION] {result.get('message')}")
-                lines.append(f"• Created SHM IDs: {result.get('created_shm_ids')}")
-                lines.append(f"• Leaked RAM: {result.get('total_leaked_ram_human')}")
+                if result.get("created_shm_ids"):
+                    lines.append(f"• Created SHM IDs: {result.get('created_shm_ids')} ({result.get('total_leaked_ram_human')})")
+                if result.get("created_msg_ids"):
+                    lines.append(f"• Created MSQ IDs: {result.get('created_msg_ids')}")
+                if result.get("created_sem_ids"):
+                    lines.append(f"• Created SEM IDs: {result.get('created_sem_ids')}")
 
             else:
                 lines.append(f"Executed tool '{tool_name}': {json.dumps(result, indent=2)}")

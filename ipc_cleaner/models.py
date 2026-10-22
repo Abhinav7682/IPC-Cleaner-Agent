@@ -98,7 +98,12 @@ class SemaphoreSet(BaseModel):
     perms: str = Field(..., description="Permission string or octal representation")
     nsems: int = Field(default=1, description="Number of semaphores in set")
     cpid: Optional[int] = Field(default=None, description="Creator PID")
+    lpid: Optional[int] = Field(default=None, description="Last operator PID")
+    nwaiters: int = Field(default=0, description="Active waiting processes count (ncount + zcount)")
+    otime: Optional[str] = Field(default=None, description="Last operation time or timestamp")
+    ctime: Optional[str] = Field(default=None, description="Last change time or timestamp")
     creator_process: Optional[ProcessInfo] = None
+    last_process: Optional[ProcessInfo] = None
     is_abandoned: bool = False
     leak_confidence: LeakConfidence = LeakConfidence.NONE
     leak_reasons: List[str] = Field(default_factory=list)

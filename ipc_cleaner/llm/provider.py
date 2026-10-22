@@ -126,14 +126,21 @@ class LocalSemanticEngine:
         is_clean_action = any(w in prompt_lower for w in ["clean", "cleanup", "clean up", "purge", "reclaim", "wipe", "delete", "free", "kill"])
         is_abandoned_target = any(w in prompt_lower for w in ["abandoned", "leak", "leaked", "orphaned", "unused", "dead", "zero attachment", "0 attachment", "lingering", "zombie"])
 
-        if is_clean_action and (is_abandoned_target or "shared memory" in prompt_lower or "shm" in prompt_lower or "ipc" in prompt_lower):
-            res_type = "all"
-            if "shared memory" in prompt_lower or "shm" in prompt_lower or "ram" in prompt_lower:
+        if is_clean_action and (is_abandoned_target or any(w in prompt_lower for w in ["shared memory", "shm", "semaphore", "sem", "message queue", "queue", "msg", "ipc"])):
+            has_shm = "shared memory" in prompt_lower or "shm" in prompt_lower or "ram" in prompt_lower
+            has_sem = "semaphore" in prompt_lower or "sem" in prompt_lower
+            has_msg = "message queue" in prompt_lower or "queue" in prompt_lower or "msg" in prompt_lower
+
+            if (has_shm and has_sem) or (has_shm and has_msg) or (has_sem and has_msg) or (not has_shm and not has_sem and not has_msg):
+                res_type = "all"
+            elif has_shm:
                 res_type = "shm"
-            elif "message queue" in prompt_lower or "msg" in prompt_lower:
-                res_type = "msg"
-            elif "semaphore" in prompt_lower or "sem" in prompt_lower:
+            elif has_sem:
                 res_type = "sem"
+            elif has_msg:
+                res_type = "msg"
+            else:
+                res_type = "all"
 
             confidence = "HIGH" if any(w in prompt_lower for w in ["dead", "strict", "confirmed"]) else "MEDIUM"
 
@@ -149,13 +156,21 @@ class LocalSemanticEngine:
 
         # 5. Intent: Audit / Scan for leaks
         if any(w in prompt_lower for w in ["audit", "scan", "check for leaks", "find leaks", "detect leaks", "show leaks", "report leaks"]):
-            res_type = "all"
-            if "shared memory" in prompt_lower or "shm" in prompt_lower:
+            has_shm = "shared memory" in prompt_lower or "shm" in prompt_lower or "ram" in prompt_lower
+            has_sem = "semaphore" in prompt_lower or "sem" in prompt_lower
+            has_msg = "message queue" in prompt_lower or "queue" in prompt_lower or "msg" in prompt_lower
+
+            if (has_shm and has_sem) or (has_shm and has_msg) or (has_sem and has_msg) or (not has_shm and not has_sem and not has_msg):
+                res_type = "all"
+            elif has_shm:
                 res_type = "shm"
-            elif "semaphore" in prompt_lower or "sem" in prompt_lower:
+            elif has_sem:
                 res_type = "sem"
-            elif "message queue" in prompt_lower or "msg" in prompt_lower:
+            elif has_msg:
                 res_type = "msg"
+            else:
+                res_type = "all"
+
             return [{
                 "name": "audit_ipc_leaks",
                 "arguments": {"resource_type": res_type, "min_confidence": "MEDIUM"}
@@ -170,13 +185,21 @@ class LocalSemanticEngine:
 
         # 7. Intent: List IPC resources
         if any(w in prompt_lower for w in ["list", "show", "display", "print", "view", "ipcs"]):
-            res_type = "all"
-            if "shared memory" in prompt_lower or "shm" in prompt_lower:
+            has_shm = "shared memory" in prompt_lower or "shm" in prompt_lower or "ram" in prompt_lower
+            has_sem = "semaphore" in prompt_lower or "sem" in prompt_lower
+            has_msg = "message queue" in prompt_lower or "queue" in prompt_lower or "msg" in prompt_lower
+
+            if (has_shm and has_sem) or (has_shm and has_msg) or (has_sem and has_msg) or (not has_shm and not has_sem and not has_msg):
+                res_type = "all"
+            elif has_shm:
                 res_type = "shm"
-            elif "semaphore" in prompt_lower or "sem" in prompt_lower:
+            elif has_sem:
                 res_type = "sem"
-            elif "message queue" in prompt_lower or "msg" in prompt_lower:
+            elif has_msg:
                 res_type = "msg"
+            else:
+                res_type = "all"
+
             return [{
                 "name": "list_ipc_resources",
                 "arguments": {"resource_type": res_type}

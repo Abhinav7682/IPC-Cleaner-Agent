@@ -90,11 +90,22 @@ class IPCExecutor:
         msqid: int,
         force: bool = False,
         dry_run: bool = False,
-        cached_queues: Optional[Dict[int, int]] = None
+        cached_queues: Optional[Dict[int, int]] = None,
+        msg_info: Optional[Any] = None
     ) -> Tuple[bool, int, Optional[str]]:
         """Removes a single message queue. Returns: (success, used_bytes, error_message)."""
         used_bytes = 0
-        if cached_queues and msqid in cached_queues:
+        queue = msg_info
+        if queue:
+            used_bytes = getattr(queue, "used_bytes", 0)
+            if getattr(queue, "messages", 0) > 0 and not force:
+                return (
+                    False,
+                    0,
+                    f"Refusing to purge msqid {msqid}: contains {queue.messages} unread messages. "
+                    f"Use force=True to override."
+                )
+        elif cached_queues and msqid in cached_queues:
             used_bytes = cached_queues[msqid]
         else:
             _, all_msg, _ = IPCParser.fetch_all()
@@ -141,9 +152,28 @@ class IPCExecutor:
         cls,
         semid: int,
         force: bool = False,
-        dry_run: bool = False
+        dry_run: bool = False,
+        cached_sems: Optional[Dict[int, Any]] = None,
+        sem_info: Optional[Any] = None
     ) -> Tuple[bool, Optional[str]]:
         """Removes a single semaphore set. Returns: (success, error_message)."""
+        sem = sem_info
+        if not sem:
+            if cached_sems and semid in cached_sems:
+                sem = cached_sems[semid]
+            else:
+                _, _, all_sem = IPCParser.fetch_all()
+                matching = [s for s in all_sem if s.id == semid]
+                if matching:
+                    sem = matching[0]
+
+        if sem and getattr(sem, "nwaiters", 0) > 0 and not force:
+            return (
+                False,
+                f"Refusing to purge semid {semid}: active waiting processes detected (nwaiters={sem.nwaiters}). "
+                f"Use force=True to override safety lock."
+            )
+
         if dry_run:
             return True, None
 
@@ -274,6 +304,9 @@ class IPCExecutor:
         force: bool = False
     ) -> PurgeResult:
         """Batch purges specified semaphore set IDs."""
+        _, _, all_sem = IPCParser.fetch_all()
+        sem_map = {s.id: s for s in all_sem}
+
         purged: List[int] = []
         failed: Dict[int, str] = {}
 
@@ -287,7 +320,7 @@ class IPCExecutor:
                 continue
 
         for sid in clean_ids:
-            ok, err = cls.remove_sem_single(sid, force=force, dry_run=dry_run)
+            ok, err = cls.remove_sem_single(sid, force=force, dry_run=dry_run, cached_sems=sem_map)
             if ok:
                 purged.append(sid)
             else:

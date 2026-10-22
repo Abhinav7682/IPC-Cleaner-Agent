@@ -5,3 +5,6 @@ __pycache__/
 *.dylib
 *.so
 bin/
+scripts/
+docs/
+*.pdf
