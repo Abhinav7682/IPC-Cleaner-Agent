@@ -21,6 +21,7 @@ if hasattr(sys.stderr, "reconfigure"):
 
 
 from ipc_cleaner.agent import IPCCleanerAgent
+from ipc_cleaner.models import format_bytes_human
 from ipc_cleaner.tools.audit import audit_ipc_leaks, get_ipc_summary, list_ipc_resources
 from ipc_cleaner.tools.cleaner import purge_abandoned_ipc
 from ipc_cleaner.tools.simulator import simulate_ipc_leak
@@ -165,15 +166,19 @@ def main() -> None:
             if res.get("abandoned_shm"):
                 print("\n  [Detected Leaked Shared Memory]")
                 for s in res["abandoned_shm"]:
-                    print(f"    SHMID: {s['id']} | Size: {s['bytes_human']} | Confidence: {s['leak_confidence']} | Reason: {s['leak_reason']}")
+                    size_str = s.get('bytes_human') or format_bytes_human(s.get('bytes', 0))
+                    reasons = ", ".join(s.get('leak_reasons', [])) if s.get('leak_reasons') else s.get('leak_reason', 'Abandoned')
+                    print(f"    SHMID: {s['id']} | Size: {size_str} | Confidence: {s['leak_confidence']} | Reason: {reasons}")
             if res.get("abandoned_msg"):
                 print("\n  [Detected Leaked Message Queues]")
                 for m in res["abandoned_msg"]:
-                    print(f"    MSQID: {m['id']} | Msgs: {m['messages']} | Confidence: {m['leak_confidence']} | Reason: {m['leak_reason']}")
+                    reasons = ", ".join(m.get('leak_reasons', [])) if m.get('leak_reasons') else m.get('leak_reason', 'Abandoned')
+                    print(f"    MSQID: {m['id']} | Msgs: {m['messages']} | Confidence: {m['leak_confidence']} | Reason: {reasons}")
             if res.get("abandoned_sem"):
                 print("\n  [Detected Leaked Semaphores]")
                 for s in res["abandoned_sem"]:
-                    print(f"    SEMID: {s['id']} | Nsems: {s['nsems']} | Waiters: {s.get('nwaiters', 0)} | Confidence: {s['leak_confidence']} | Reason: {s['leak_reason']}")
+                    reasons = ", ".join(s.get('leak_reasons', [])) if s.get('leak_reasons') else s.get('leak_reason', 'Abandoned')
+                    print(f"    SEMID: {s['id']} | Nsems: {s['nsems']} | Waiters: {s.get('nwaiters', 0)} | Confidence: {s['leak_confidence']} | Reason: {reasons}")
             if res["abandoned_shm_count"] == 0 and res["abandoned_msg_count"] == 0 and res["abandoned_sem_count"] == 0:
                 print("\n  ✅ No abandoned or leaked IPC resources detected.")
         return
